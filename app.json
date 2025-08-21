@@ -1,0 +1,57 @@
+{
+  "name": "MadaraFileShareBot",
+  "description": "A Telegram File Sharing Bot using Pyrogram, MongoDB, and LinkPays integration.",
+  "repository": "https://github.com/yourusername/madara-file-share-bot",
+  "keywords": ["telegram", "file-bot", "pyrogram", "mongodb", "linkpays", "madara"],
+  "buildpacks": [
+    { "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git" },
+    { "url": "heroku/python" }
+  ],
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID (from https://my.telegram.org/apps)",
+      "value": "123456",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash (from https://my.telegram.org/apps)",
+      "value": "your_api_hash",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token (from @BotFather)",
+      "value": "your_bot_token",
+      "required": true
+    },
+    "MONGO_URI": {
+      "description": "MongoDB URI for storing file records",
+      "value": "mongodb+srv://...",
+      "required": true
+    },
+    "LINKPAYS_API": {
+      "description": "Your LinkPays API key for shortening links",
+      "value": "your_linkpays_api_key",
+      "required": true
+    },
+    "ADMIN_ID": {
+      "description": "Telegram User ID of the bot admin (numeric ID only)",
+      "value": "123456789",
+      "required": true
+    },
+    "AUTO_DELETE_SECONDS": {
+      "description": "Auto delete delay in seconds (default: 600 = 10 min)",
+      "value": "600",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "Basic"
+    }
+  },
+  "addons": [],
+  "scripts": {
+    "postdeploy": "echo '✅ Madara File Share Bot deployed successfully on Heroku!'"
+  }
+}
