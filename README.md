@@ -3,6 +3,11 @@
 A Telegram File Share Bot with MongoDB support + LinkPays shortener integration.  
 Built using **Pyrogram** + **MongoDB** + **Heroku**.
 
+## 🚀 Deploy to Heroku  
+
+[![Deploy](https://img.shields.io/badge/Deploy%20To%20Heroku-red?style=for-the-badge&logo=heroku)](https://heroku.com/deploy?template=https://github.com/demonlord2002/simofl)
+
+
 ---
 
 ## 🚀 Features
