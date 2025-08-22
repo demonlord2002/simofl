@@ -3,7 +3,7 @@
 Coolie Auto-Post + Sample Video Bot with MongoDB
 ------------------------------------------------
 Admin:
-• Reply to TEXT with /attach <keyword> → saves post
+• Reply to TEXT or IMAGE with /attach <keyword> → saves post
 • Reply to VIDEO with /attach <keyword> → saves sample video
 • /delete <keyword> → deletes post + sample video
 
@@ -11,11 +11,12 @@ User:
 • Send <keyword> → bot sends post + sample video
 • Auto-delete after 10 min
 • protect_content=True
+• Fixed How To Download button included automatically
 """
 
 import asyncio, re
 from typing import Optional, Tuple
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from pymongo import MongoClient
 
@@ -50,19 +51,6 @@ def convert_bracket_links_to_html(text: str) -> str:
     parts.append(html_escape(text[last:]))
     return "".join(parts)
 
-def extract_special_links_for_buttons(text: str) -> Tuple[Optional[str], Optional[str]]:
-    download_url = howto_url = None
-    for line in text.splitlines():
-        urls = URL_RE.findall(line.strip())
-        if not urls:
-            continue
-        url = urls[0]
-        if "🔗" in line and not download_url:
-            download_url = url
-        if ("How To Download" in line or "🖇️" in line) and not howto_url:
-            howto_url = url
-    return download_url, howto_url
-
 async def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
         await asyncio.sleep(config.AUTO_DELETE_SECONDS)
@@ -74,7 +62,7 @@ async def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 Hi! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
-        "Admins:\n• Reply to TEXT/VIDEO with /attach <keyword>\n"
+        "Admins:\n• Reply to TEXT/IMAGE/VIDEO with /attach <keyword>\n"
         "• /delete <keyword>\n"
         f"Auto-delete: {config.AUTO_DELETE_SECONDS//60} min, protect_content: ON"
     )
@@ -85,7 +73,7 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Usage: /attach <keyword> (reply to TEXT or VIDEO)")
+        await update.message.reply_text("Usage: /attach <keyword> (reply to TEXT, IMAGE, or VIDEO)")
         return
     keyword = norm_kw(args[0])
     replied = update.message.reply_to_message
@@ -98,6 +86,12 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Sample video attached for '{keyword}'.")
         saved = True
 
+    # Image → save poster
+    if replied and replied.photo:
+        photo_file_id = replied.photo[-1].file_id  # highest resolution
+        collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id}}, upsert=True)
+        saved = True
+
     # Text → save post
     post_text = None
     if replied and replied.text:
@@ -106,11 +100,12 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         post_text = update.message.text.split(None,2)[2]
     if post_text:
         collection.update_one({"keyword": keyword}, {"$set": {"post_html": convert_bracket_links_to_html(post_text)}}, upsert=True)
-        await update.message.reply_text(f"✅ Post text attached for '{keyword}'.")
         saved = True
 
-    if not saved:
-        await update.message.reply_text("Nothing attached. Reply to TEXT or VIDEO or provide post text after keyword.")
+    if saved:
+        await update.message.reply_text(f"✅ Content attached for '{keyword}'.")
+    else:
+        await update.message.reply_text("Nothing attached. Reply to TEXT, IMAGE, or VIDEO or provide post text after keyword.")
 
 async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -132,19 +127,32 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = collection.find_one({"keyword": keyword})
     if not data:
         return
+
     chat_id = update.effective_chat.id
     post_html = data.get("post_html") or html_escape(update.message.text)
-    dl_url, how_url = extract_special_links_for_buttons(post_html)
-    buttons = []
-    if dl_url:
-        buttons.append([InlineKeyboardButton("Download — Click Here", url=dl_url)])
-    if how_url:
-        buttons.append([InlineKeyboardButton("How To Download — Click Here", url=how_url)])
-    markup = InlineKeyboardMarkup(buttons) if buttons else None
-    msg1 = await context.bot.send_message(chat_id, text=post_html, parse_mode=constants.ParseMode.HTML,
-                                         disable_web_page_preview=True, protect_content=True, reply_markup=markup)
-    asyncio.create_task(schedule_auto_delete(context, chat_id, msg1.message_id))
-    if sample_id := data.get("sample_file_id"):
+    poster_id = data.get("poster_file_id")
+    sample_id = data.get("sample_file_id")
+
+    # Always fixed How To Download button
+    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
+    markup = InlineKeyboardMarkup(buttons)
+
+    # Send poster + text if poster exists
+    if poster_id:
+        msg = await context.bot.send_photo(
+            chat_id, photo=poster_id, caption=post_html, parse_mode=constants.ParseMode.HTML,
+            disable_web_page_preview=True, protect_content=True, reply_markup=markup
+        )
+        asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
+    else:
+        msg = await context.bot.send_message(
+            chat_id, text=post_html, parse_mode=constants.ParseMode.HTML,
+            disable_web_page_preview=True, protect_content=True, reply_markup=markup
+        )
+        asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
+
+    # Send sample video if exists
+    if sample_id:
         msg2 = await context.bot.send_video(chat_id, video=sample_id, protect_content=True)
         asyncio.create_task(schedule_auto_delete(context, chat_id, msg2.message_id))
 
