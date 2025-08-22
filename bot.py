@@ -2,12 +2,6 @@
 """
 Coolie Auto-Post + Sample Video Bot with MongoDB
 ------------------------------------------------
-Admin:
-• Reply to TEXT or IMAGE with /attach <keyword> → saves post
-• Reply to VIDEO with /attach <keyword> → saves sample video
-• /delete <keyword> → deletes post + sample video
-• /broadcast <keyword> → manually broadcast specific post+video
-
 User:
 • Send <keyword> → bot sends post + sample video
 • Auto-delete after 10 min
@@ -74,7 +68,11 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
     sample_id = post.get("sample_file_id")
-    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
+    buttons = [[
+        InlineKeyboardButton("Developer", url="https://t.me/SunsetOfMe"),
+        InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3"),
+        InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
+    ]]
     markup = InlineKeyboardMarkup(buttons)
 
     if poster_id:
@@ -116,6 +114,7 @@ async def auto_broadcast_new_posts(app: Application):
                         users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
                     except:
                         continue
+        # 3 times/day roughly every 8 hours
         await asyncio.sleep(8*60*60)
 
 # -------------------- Commands --------------------
@@ -136,12 +135,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         upsert=True
     )
 
+    buttons = [[
+        InlineKeyboardButton("Developer", url="https://t.me/SunsetOfMe"),
+        InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3"),
+        InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
+    ]]
+    markup = InlineKeyboardMarkup(buttons)
+
     await update.message.reply_text(
-        f"👋 Hi {user.first_name}! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
-        "Admins:\n• Reply to TEXT/IMAGE/VIDEO with /attach <keyword>\n"
-        "• /delete <keyword>\n"
-        "• /broadcast <keyword>\n"
-        f"Auto-delete: {config.AUTO_DELETE_SECONDS//60} min, protect_content: ON"
+        f"👋 Hi {user.first_name}! 🎬\n"
+        "This bot automatically sends saved posts + sample videos when you send a keyword.\n\n"
+        "Just send a keyword like 'coolie' to get the movie info and sample video.",
+        parse_mode=constants.ParseMode.HTML,
+        reply_markup=markup
     )
 
 async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +163,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     replied = update.message.reply_to_message
     saved = False
 
-    # fetch existing data
     existing = collection.find_one({"keyword": keyword}) or {}
 
     # post text
