@@ -1,57 +1,47 @@
 {
-  "name": "MadaraFileShareBot",
-  "description": "A Telegram File Sharing Bot using Pyrogram, MongoDB, and LinkPays integration.",
-  "repository": "https://github.com/yourusername/madara-file-share-bot",
-  "keywords": ["telegram", "file-bot", "pyrogram", "mongodb", "linkpays", "madara"],
+  "name": "coolie-auto-post-bot",
+  "description": "Telegram bot to auto-send movie posts + sample videos with MongoDB",
+  "repository": "https://github.com/yourusername/coolie-auto-post-bot",
+  "logo": "https://telegram.org/img/t_logo.png",
+  "keywords": ["telegram", "bot", "movie", "coolie", "mongodb"],
   "buildpacks": [
-    { "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git" },
-    { "url": "heroku/python" }
+    {
+      "url": "heroku/python"
+    }
   ],
   "env": {
-    "API_ID": {
-      "description": "Telegram API ID (from https://my.telegram.org/apps)",
-      "value": "123456",
-      "required": true
-    },
-    "API_HASH": {
-      "description": "Telegram API Hash (from https://my.telegram.org/apps)",
-      "value": "your_api_hash",
-      "required": true
-    },
     "BOT_TOKEN": {
-      "description": "Telegram Bot Token (from @BotFather)",
-      "value": "your_bot_token",
-      "required": true
+      "description": "Your Telegram Bot Token from @BotFather",
+      "required": true,
+      "value": "123456789:ABCDEF_your_bot_token_here"
     },
-    "MONGO_URI": {
-      "description": "MongoDB URI for storing file records",
-      "value": "mongodb+srv://...",
-      "required": true
-    },
-    "LINKPAYS_API": {
-      "description": "Your LinkPays API key for shortening links",
-      "value": "your_linkpays_api_key",
-      "required": true
-    },
-    "ADMIN_ID": {
-      "description": "Telegram User ID of the bot admin (numeric ID only)",
-      "value": "123456789",
-      "required": true
+    "OWNER_IDS": {
+      "description": "Comma-separated Telegram user IDs of bot admins",
+      "required": true,
+      "value": "123456789,987654321"
     },
     "AUTO_DELETE_SECONDS": {
-      "description": "Auto delete delay in seconds (default: 600 = 10 min)",
-      "value": "600",
-      "required": false
+      "description": "Auto-delete messages after seconds (default 600)",
+      "value": "600"
+    },
+    "MONGO_URI": {
+      "description": "MongoDB connection URI (e.g., mongodb://localhost:27017 or Atlas URI)",
+      "required": true,
+      "value": "mongodb://localhost:27017"
+    },
+    "DB_NAME": {
+      "description": "MongoDB database name",
+      "value": "coolie_bot"
+    },
+    "COLLECTION_NAME": {
+      "description": "MongoDB collection name",
+      "value": "keywords"
     }
   },
   "formation": {
     "worker": {
       "quantity": 1,
-      "size": "Basic"
+      "size": "free"
     }
-  },
-  "addons": [],
-  "scripts": {
-    "postdeploy": "echo '✅ Madara File Share Bot deployed successfully on Heroku!'"
   }
 }
