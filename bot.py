@@ -154,19 +154,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
         ],
         [
-            InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")
+            InlineKeyboardButton("Watch Sample Here", url="https://t.me/tamilmoviedownload0/3")
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(
-        f"🎬 Welcome {user.first_name}!\n\n"
-        "Here you can instantly get the latest movies, videos, and posts.\n"
-        "Just type the keyword of the movie or post you want and receive it instantly.\n\n"
-        "Enjoy your stay and happy streaming! 🍿",
+        f"👋 Hi {user.first_name}!\n\n"
+        "Welcome! Here you can explore the latest clips, short videos, and posts.\n"
+        "Just type the keyword you are interested in, and you'll receive the content instantly.\n\n"
+        "Have fun exploring! 🎉",
         parse_mode=constants.ParseMode.HTML,
         reply_markup=markup
-    )
+)
+
 
 async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
