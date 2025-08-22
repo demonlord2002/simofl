@@ -2,17 +2,11 @@
 """
 Coolie Auto-Post + Sample Video Bot with MongoDB
 ------------------------------------------------
-Admin:
-• Reply to TEXT or IMAGE with /attach <keyword> → saves post
-• Reply to VIDEO with /attach <keyword> → saves sample video
-• /delete <keyword> → deletes post + sample video
-• /broadcast <keyword> → manually broadcast specific post+video
-
-User:
-• Send <keyword> → bot sends post + sample video
+Features:
+• Send saved posts + sample videos via keyword
 • Auto-delete after 10 min
 • protect_content=True
-• Fixed How To Download button included automatically
+• Fixed "How To Download" button + Support Channel + Developer button
 • Auto-clean old entries silently after 1 year
 • Auto daily broadcast of new posts 3 times/day
 • Avoid sending same post twice to same user
@@ -74,7 +68,14 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
     sample_id = post.get("sample_file_id")
-    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
+
+    buttons = [
+        [
+            InlineKeyboardButton("👤 Developer", url="https://t.me/SunsetOfMe"),
+            InlineKeyboardButton("📥 How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3"),
+            InlineKeyboardButton("📡 Support Channel", url="https://t.me/Cursed_Intelligence")
+        ]
+    ]
     markup = InlineKeyboardMarkup(buttons)
 
     if poster_id:
@@ -105,18 +106,20 @@ async def auto_broadcast_new_posts(app: Application):
         all_users = list(users_col.find())
 
         if new_posts and all_users:
-            for user in all_users:
-                sent_posts = user.get("sent_posts", [])
-                for post in new_posts:
-                    keyword = post.get("keyword")
-                    if not keyword or keyword in sent_posts:
-                        continue
-                    try:
-                        await send_post_to_user(app, user["chat_id"], post)
-                        users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
-                    except:
-                        continue
-        await asyncio.sleep(8*60*60)
+            # Broadcast 3 times/day (every 8 hours)
+            for _ in range(3):
+                for user in all_users:
+                    sent_posts = user.get("sent_posts", [])
+                    for post in new_posts:
+                        keyword = post.get("keyword")
+                        if not keyword or keyword in sent_posts:
+                            continue
+                        try:
+                            await send_post_to_user(app, user["chat_id"], post)
+                            users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
+                        except:
+                            continue
+                await asyncio.sleep(8*60*60)
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,11 +140,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"👋 Hi {user.first_name}! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
-        "Admins:\n• Reply to TEXT/IMAGE/VIDEO with /attach <keyword>\n"
-        "• /delete <keyword>\n"
-        "• /broadcast <keyword>\n"
-        f"Auto-delete: {config.AUTO_DELETE_SECONDS//60} min, protect_content: ON"
+        f"👋 Hi {user.first_name}! This bot lets you get posts + sample videos instantly.\n"
+        f"Just send a saved keyword (e.g., 'coolie') to get post + sample video.\n"
+        f"All messages auto-delete after {config.AUTO_DELETE_SECONDS//60} minutes.\n"
+        f"Enjoy safe & easy downloads!",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("👤 Developer", url="https://t.me/SunsetOfMe"),
+                InlineKeyboardButton("📥 How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3"),
+                InlineKeyboardButton("📡 Support Channel", url="https://t.me/Cursed_Intelligence")
+            ]
+        ])
     )
 
 async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,10 +166,8 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     replied = update.message.reply_to_message
     saved = False
 
-    # fetch existing data
     existing = collection.find_one({"keyword": keyword}) or {}
 
-    # post text
     post_text = None
     if replied:
         post_text = replied.text or replied.caption
@@ -177,14 +184,12 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         saved = True
 
-    # sample video
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
         if file_id != existing.get("sample_file_id"):
             collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
             saved = True
 
-    # poster image
     if replied and replied.photo:
         photo_file_id = replied.photo[-1].file_id
         if photo_file_id != existing.get("poster_file_id"):
