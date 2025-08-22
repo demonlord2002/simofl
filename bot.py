@@ -6,26 +6,29 @@ Admin:
 • Reply to TEXT or IMAGE with /attach <keyword> → saves post
 • Reply to VIDEO with /attach <keyword> → saves sample video
 • /delete <keyword> → deletes post + sample video
+• /broadcast <keyword> → manually broadcast specific post+video
 
 User:
 • Send <keyword> → bot sends post + sample video
 • Auto-delete after 10 min
 • protect_content=True
 • Fixed How To Download button included automatically
+• Auto-clean old entries silently after 1 year
+• Auto daily broadcast of new posts 3 times/day
 """
 
-import asyncio, re
+import asyncio, re, datetime
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from pymongo import MongoClient
-
 import config
 
 # -------------------- MongoDB --------------------
 client = MongoClient(config.MONGO_URI)
 db = client[config.DB_NAME]
 collection = db[config.COLLECTION_NAME]
+users_col = db["users"]  # store users for broadcast
 
 # -------------------- Utils --------------------
 def is_owner(user_id: Optional[int]) -> bool:
@@ -57,12 +60,79 @@ async def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     except:
         pass
 
+async def auto_clean_old_entries():
+    """Delete MongoDB entries older than 1 year silently"""
+    while True:
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=365)
+        collection.delete_many({"timestamp": {"$lt": cutoff}})
+        await asyncio.sleep(24*60*60)  # run daily
+
+# -------------------- Broadcasting --------------------
+async def send_post_to_user(app: Application, chat_id: int, post: dict):
+    post_html = post.get("post_html") or ""
+    poster_id = post.get("poster_file_id")
+    sample_id = post.get("sample_file_id")
+    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
+    markup = InlineKeyboardMarkup(buttons)
+
+    if poster_id:
+        msg = await app.bot.send_photo(
+            chat_id, photo=poster_id, caption=post_html,
+            parse_mode=constants.ParseMode.HTML,
+            protect_content=True, reply_markup=markup
+        )
+        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
+    else:
+        msg = await app.bot.send_message(
+            chat_id, text=post_html,
+            parse_mode=constants.ParseMode.HTML,
+            protect_content=True, reply_markup=markup
+        )
+        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
+
+    if sample_id:
+        msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
+        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
+
+async def auto_broadcast_new_posts(app: Application):
+    """Broadcast all posts created today automatically 3 times per day"""
+    while True:
+        now = datetime.datetime.utcnow()
+        start_of_day = datetime.datetime(now.year, now.month, now.day)
+        new_posts = list(collection.find({"timestamp": {"$gte": start_of_day}}))
+        if new_posts:
+            all_users = users_col.find()
+            for post in new_posts:
+                for user in all_users:
+                    try:
+                        await send_post_to_user(app, user["chat_id"], post)
+                    except:
+                        continue
+        await asyncio.sleep(8*60*60)  # every 8 hours → 3 times/day
+
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    # Save user info permanently for broadcasts
+    users_col.update_one(
+        {"chat_id": chat_id},
+        {"$set": {
+            "chat_id": chat_id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "joined_at": datetime.datetime.utcnow()
+        }},
+        upsert=True
+    )
+
     await update.message.reply_text(
-        f"👋 Hi! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
+        f"👋 Hi {user.first_name}! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
         "Admins:\n• Reply to TEXT/IMAGE/VIDEO with /attach <keyword>\n"
         "• /delete <keyword>\n"
+        "• /broadcast <keyword>\n"
         f"Auto-delete: {config.AUTO_DELETE_SECONDS//60} min, protect_content: ON"
     )
 
@@ -74,6 +144,7 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text("Usage: /attach <keyword> (reply to TEXT, IMAGE, or VIDEO)")
         return
+
     keyword = norm_kw(args[0])
     replied = update.message.reply_to_message
     saved = False
@@ -87,7 +158,7 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if post_text:
         collection.update_one(
             {"keyword": keyword},
-            {"$set": {"post_html": convert_bracket_links_to_html(post_text)}},
+            {"$set": {"post_html": convert_bracket_links_to_html(post_text), "timestamp": datetime.datetime.utcnow()}},
             upsert=True
         )
         saved = True
@@ -95,13 +166,13 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Video → save sample
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
-        collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id}}, upsert=True)
+        collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
         saved = True
 
     # Image → save poster
     if replied and replied.photo:
-        photo_file_id = replied.photo[-1].file_id  # highest resolution
-        collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id}}, upsert=True)
+        photo_file_id = replied.photo[-1].file_id
+        collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
         saved = True
 
     if saved:
@@ -125,38 +196,46 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"'{keyword}' not found.")
 
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    # save user info for broadcast
+    user = update.effective_user
+    users_col.update_one(
+        {"chat_id": chat_id},
+        {"$set": {
+            "chat_id": chat_id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "joined_at": datetime.datetime.utcnow()
+        }},
+        upsert=True
+    )
     keyword = norm_kw(update.message.text or "")
     data = collection.find_one({"keyword": keyword})
     if not data:
         return
+    await send_post_to_user(context.application, chat_id, data)
 
-    chat_id = update.effective_chat.id
-    post_html = data.get("post_html") or html_escape(update.message.text)
-    poster_id = data.get("poster_file_id")
-    sample_id = data.get("sample_file_id")
-
-    # Fixed How To Download button
-    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
-    markup = InlineKeyboardMarkup(buttons)
-
-    # Send poster + text if poster exists
-    if poster_id:
-        msg = await context.bot.send_photo(
-            chat_id, photo=poster_id, caption=post_html, parse_mode=constants.ParseMode.HTML,
-            protect_content=True, reply_markup=markup
-        )
-        asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
-    else:
-        msg = await context.bot.send_message(
-            chat_id, text=post_html, parse_mode=constants.ParseMode.HTML,
-            protect_content=True, reply_markup=markup
-        )
-        asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
-
-    # Send sample video if exists
-    if sample_id:
-        msg2 = await context.bot.send_video(chat_id, video=sample_id, protect_content=True)
-        asyncio.create_task(schedule_auto_delete(context, chat_id, msg2.message_id))
+async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /broadcast <keyword>")
+        return
+    keyword = norm_kw(args[0])
+    post = collection.find_one({"keyword": keyword})
+    if not post:
+        await update.message.reply_text(f"Keyword '{keyword}' not found.")
+        return
+    all_users = users_col.find()
+    for user in all_users:
+        try:
+            await send_post_to_user(context.application, user["chat_id"], post)
+        except:
+            continue
+    await update.message.reply_text(f"✅ Broadcasted '{keyword}' to all users.")
 
 # -------------------- Main --------------------
 def main():
@@ -166,7 +245,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("attach", attach))
     app.add_handler(CommandHandler("delete", delete_keyword))
+    app.add_handler(CommandHandler("broadcast", manual_broadcast))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
+
+    # Background tasks
+    asyncio.create_task(auto_clean_old_entries())
+    asyncio.create_task(auto_broadcast_new_posts(app))
+
     print("Bot running…")
     app.run_polling(close_loop=False)
 
