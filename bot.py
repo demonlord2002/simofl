@@ -15,8 +15,8 @@ User:
 """
 
 import asyncio, re
-from typing import Optional, Tuple
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, InputMediaPhoto
+from typing import Optional
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from pymongo import MongoClient
 
@@ -38,7 +38,6 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 BRACKET_LINK_RE = re.compile(r"(?P<label>[^\[]+?)\[(?P<url>https?://[^\]\s]+)\]")
-URL_RE = re.compile(r"https?://\S+")
 
 def convert_bracket_links_to_html(text: str) -> str:
     parts, last = [], 0
@@ -83,7 +82,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
         collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id}}, upsert=True)
-        await update.message.reply_text(f"✅ Sample video attached for '{keyword}'.")
         saved = True
 
     # Image → save poster
@@ -133,7 +131,7 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poster_id = data.get("poster_file_id")
     sample_id = data.get("sample_file_id")
 
-    # Always fixed How To Download button
+    # Fixed How To Download button
     buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
     markup = InlineKeyboardMarkup(buttons)
 
@@ -141,13 +139,13 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if poster_id:
         msg = await context.bot.send_photo(
             chat_id, photo=poster_id, caption=post_html, parse_mode=constants.ParseMode.HTML,
-            disable_web_page_preview=True, protect_content=True, reply_markup=markup
+            protect_content=True, reply_markup=markup
         )
         asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
     else:
         msg = await context.bot.send_message(
             chat_id, text=post_html, parse_mode=constants.ParseMode.HTML,
-            disable_web_page_preview=True, protect_content=True, reply_markup=markup
+            protect_content=True, reply_markup=markup
         )
         asyncio.create_task(schedule_auto_delete(context, chat_id, msg.message_id))
 
