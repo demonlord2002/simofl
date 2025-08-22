@@ -16,6 +16,7 @@ User:
 • Auto-clean old entries silently after 1 year
 • Auto daily broadcast of new posts 3 times/day
 • Avoid sending same post twice to same user
+• Auto-overwrite support with confirmation
 """
 
 import asyncio, re, datetime
@@ -54,21 +55,21 @@ def convert_bracket_links_to_html(text: str) -> str:
     parts.append(html_escape(text[last:]))
     return "".join(parts)
 
-async def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+# -------------------- Auto Delete --------------------
+async def schedule_auto_delete(bot, chat_id: int, message_id: int):
     try:
         await asyncio.sleep(config.AUTO_DELETE_SECONDS)
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except:
         pass
 
 async def auto_clean_old_entries(app: Application):
-    """Delete MongoDB entries older than 1 year silently"""
     while True:
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=365)
         collection.delete_many({"timestamp": {"$lt": cutoff}})
-        await asyncio.sleep(24*60*60)  # run daily
+        await asyncio.sleep(24*60*60)
 
-# -------------------- Broadcasting --------------------
+# -------------------- Sending Posts --------------------
 async def send_post_to_user(app: Application, chat_id: int, post: dict):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
@@ -95,8 +96,8 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
         msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
         asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
 
+# -------------------- Auto Broadcast --------------------
 async def auto_broadcast_new_posts(app: Application):
-    """Broadcast all posts created today automatically 3 times per day"""
     while True:
         now = datetime.datetime.utcnow()
         start_of_day = datetime.datetime(now.year, now.month, now.day)
@@ -105,21 +106,17 @@ async def auto_broadcast_new_posts(app: Application):
 
         if new_posts and all_users:
             for user in all_users:
-                sent_posts = user.get("sent_posts", [])  # posts already sent to user
+                sent_posts = user.get("sent_posts", [])
                 for post in new_posts:
                     keyword = post.get("keyword")
                     if not keyword or keyword in sent_posts:
-                        continue  # skip already sent post
+                        continue
                     try:
                         await send_post_to_user(app, user["chat_id"], post)
-                        # mark as sent
-                        users_col.update_one(
-                            {"chat_id": user["chat_id"]},
-                            {"$push": {"sent_posts": keyword}}
-                        )
+                        users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
                     except:
                         continue
-        await asyncio.sleep(8*60*60)  # every 8 hours → 3 times/day
+        await asyncio.sleep(8*60*60)
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
         },
-        "$setOnInsert": {"sent_posts": []}},  # init sent_posts list
+        "$setOnInsert": {"sent_posts": []}},
         upsert=True
     )
 
@@ -157,18 +154,27 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyword = norm_kw(args[0])
+    existing = collection.find_one({"keyword": keyword})
+    if existing:
+        await update.message.reply_text(
+            f"⚠️ Keyword '{keyword}' already exists. Use /delete {keyword} first to overwrite."
+        )
+        return
+
     replied = update.message.reply_to_message
     saved = False
-
     post_text = None
     if replied:
         post_text = replied.text or replied.caption
     if len(args) >= 2 and not post_text:
         post_text = update.message.text.split(None, 2)[2]
+
     if post_text:
         collection.update_one(
             {"keyword": keyword},
-            {"$set": {"post_html": convert_bracket_links_to_html(post_text), "timestamp": datetime.datetime.utcnow(), "keyword": keyword}},
+            {"$set": {"post_html": convert_bracket_links_to_html(post_text),
+                      "timestamp": datetime.datetime.utcnow(),
+                      "keyword": keyword}},
             upsert=True
         )
         saved = True
@@ -199,7 +205,6 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyword = norm_kw(args[0])
     result = collection.delete_one({"keyword": keyword})
     if result.deleted_count:
-        # remove keyword from all users sent_posts
         users_col.update_many({}, {"$pull": {"sent_posts": keyword}})
         await update.message.reply_text(f"🗑️ '{keyword}' deleted successfully.")
     else:
@@ -217,7 +222,7 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
         },
-        "$setOnInsert": {"sent_posts": []}},  # init sent_posts list
+        "$setOnInsert": {"sent_posts": []}},
         upsert=True
     )
     keyword = norm_kw(update.message.text or "")
@@ -264,8 +269,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
 
     async def on_startup(app: Application):
-        app.create_task(auto_clean_old_entries(app))
-        app.create_task(auto_broadcast_new_posts(app))
+        asyncio.create_task(auto_clean_old_entries(app))
+        asyncio.create_task(auto_broadcast_new_posts(app))
 
     app.post_init = on_startup
 
