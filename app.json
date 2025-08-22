@@ -2,23 +2,20 @@
   "name": "coolie-auto-post-bot",
   "description": "Telegram bot to auto-send movie posts + sample videos with MongoDB",
   "repository": "https://github.com/demonlord2002/simofl",
-  "logo": "https://telegram.org/img/t_logo.png",
   "keywords": ["telegram", "bot", "movie", "coolie", "mongodb"],
   "buildpacks": [
-    {
-      "url": "heroku/python"
-    }
+    { "url": "heroku/python" }
   ],
   "env": {
     "BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
-      "required": true,
-      "value": "7881851045:AAG8pEtMgAxwEtTQDfAODKLHVUB05ZpWTrY"
+      "value": "7881851045:AAG8pEtMgAxwEtTQDfAODKLHVUB05ZpWTrY",
+      "required": true
     },
     "OWNER_IDS": {
       "description": "Comma-separated Telegram user IDs of bot admins",
-      "required": true,
-      "value": "7806800300"
+      "value": "7806800300",
+      "required": true
     },
     "AUTO_DELETE_SECONDS": {
       "description": "Auto-delete messages after seconds (default 600)",
@@ -26,8 +23,8 @@
     },
     "MONGO_URI": {
       "description": "MongoDB connection URI (e.g., mongodb://localhost:27017 or Atlas URI)",
-      "required": true,
-      "value": "mongodb+srv://rubesh08virat:rubesh08virat@cluster0.d33p1rm.mongodb.net/?retryWrites=true&w=majority"
+      "value": "mongodb+srv://rubesh08virat:rubesh08virat@cluster0.d33p1rm.mongodb.net/?retryWrites=true&w=majority",
+      "required": true
     },
     "DB_NAME": {
       "description": "MongoDB database name",
@@ -41,7 +38,11 @@
   "formation": {
     "worker": {
       "quantity": 1,
-      "size": "free"
+      "size": "Basic"
     }
+  },
+  "addons": [],
+  "scripts": {
+    "postdeploy": "echo '✅ Coolie Auto-Post Bot deployed successfully on Heroku!'"
   }
 }
