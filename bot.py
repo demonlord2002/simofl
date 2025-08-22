@@ -78,6 +78,20 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     replied = update.message.reply_to_message
     saved = False
 
+    # Text or caption → save post
+    post_text = None
+    if replied:
+        post_text = replied.text or replied.caption
+    if len(args) >= 2 and not post_text:
+        post_text = update.message.text.split(None, 2)[2]
+    if post_text:
+        collection.update_one(
+            {"keyword": keyword},
+            {"$set": {"post_html": convert_bracket_links_to_html(post_text)}},
+            upsert=True
+        )
+        saved = True
+
     # Video → save sample
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
@@ -88,16 +102,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if replied and replied.photo:
         photo_file_id = replied.photo[-1].file_id  # highest resolution
         collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id}}, upsert=True)
-        saved = True
-
-    # Text → save post
-    post_text = None
-    if replied and replied.text:
-        post_text = replied.text
-    elif len(args) >= 2:
-        post_text = update.message.text.split(None,2)[2]
-    if post_text:
-        collection.update_one({"keyword": keyword}, {"$set": {"post_html": convert_bracket_links_to_html(post_text)}}, upsert=True)
         saved = True
 
     if saved:
