@@ -150,11 +150,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------------------------------------------------------
 
     await update.message.reply_text(
-        f"👋 Hi {user.first_name}! Send a saved keyword (e.g., 'coolie') to get post + sample video.\n\n"
-        "Admins:\n• Reply to TEXT/IMAGE/VIDEO with /attach <keyword>\n"
-        "• /delete <keyword>\n"
-        "• /broadcast <keyword>\n"
-        f"Auto-delete: {config.AUTO_DELETE_SECONDS//60} min, protect_content: ON",
+        f"🎬 Welcome {user.first_name}!\n\n"
+        "Here you can instantly get the latest movies, videos, and posts.\n"
+        "Just type the keyword of the movie or post you want and receive it instantly.\n\n"
+        "Enjoy your stay and happy streaming! 🍿",
         parse_mode=constants.ParseMode.HTML,
         reply_markup=markup
     )
