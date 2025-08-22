@@ -1,24 +1,10 @@
-"""
-config.py
-Stores all environment variables and configuration.
-"""
+# config.py
 
 import os
 
-class Config:
-    # Telegram API
-    API_ID = int(os.getenv("API_ID", "0"))
-    API_HASH = os.getenv("API_HASH")
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-    # MongoDB
-    MONGO_URI = os.getenv("MONGO_URI")
-
-    # LinkPays Shortener
-    LINKPAYS_API = os.getenv("LINKPAYS_API")
-
-    # Admin
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-    # Auto delete seconds (default 600s = 10 min)
-    AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "600"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+OWNER_IDS = {int(uid.strip()) for uid in os.environ.get("OWNER_IDS", "").split(",") if uid.strip().isdigit()}
+AUTO_DELETE_SECONDS = int(os.getenv("AUTO_DELETE_SECONDS", "600"))  # default 10 min
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.environ.get("DB_NAME", "coolie_bot")
+COLLECTION_NAME = os.environ.get("COLLECTION_NAME", "keywords")
