@@ -15,7 +15,7 @@ User:
 • Fixed How To Download button included automatically
 • Auto-clean old entries silently after 1 year
 • Auto daily broadcast of new posts 3 times/day
-• Avoid sending same post twice to same user
+• Avoid sending same post twice to same user (per day)
 • Auto-overwrite support
 """
 
@@ -101,22 +101,34 @@ async def auto_broadcast_new_posts(app: Application):
     while True:
         now = datetime.datetime.utcnow()
         start_of_day = datetime.datetime(now.year, now.month, now.day)
+        today_key = start_of_day.strftime("%Y-%m-%d")
+
         new_posts = list(collection.find({"timestamp": {"$gte": start_of_day}}))
         all_users = list(users_col.find())
 
         if new_posts and all_users:
             for user in all_users:
-                sent_posts = user.get("sent_posts", [])
+                sent_today = user.get("sent_today", {}).get(today_key, [])
+
                 for post in new_posts:
                     keyword = post.get("keyword")
-                    if not keyword or keyword in sent_posts:
+                    if not keyword or keyword in sent_today:
                         continue
                     try:
                         await send_post_to_user(app, user["chat_id"], post)
-                        users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
+                        users_col.update_one(
+                            {"chat_id": user["chat_id"]},
+                            {"$push": {f"sent_today.{today_key}": keyword}}
+                        )
                     except:
                         continue
+
+        # run again in 8 hours (3 times per day)
         await asyncio.sleep(8*60*60)
+
+        # cleanup old sent_today entries (older than 2 days)
+        cutoff_key = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+        users_col.update_many({}, {"$unset": {f"sent_today.{cutoff_key}": ""}})
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,11 +144,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
         },
-        "$setOnInsert": {"sent_posts": []}},
+        "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
     )
 
-    # ---------------- Updated Buttons Layout ----------------
     buttons = [
         [
             InlineKeyboardButton("Developer", url="https://t.me/SunsetOfMe"),
@@ -147,7 +158,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
-    # ---------------------------------------------------------
 
     await update.message.reply_text(
         f"🎬 Welcome {user.first_name}!\n\n"
@@ -237,7 +247,7 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
         },
-        "$setOnInsert": {"sent_posts": []}},
+        "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
     )
     keyword = norm_kw(update.message.text or "")
