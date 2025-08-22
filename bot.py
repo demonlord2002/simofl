@@ -16,7 +16,7 @@ User:
 • Auto-clean old entries silently after 1 year
 • Auto daily broadcast of new posts 3 times/day
 • Avoid sending same post twice to same user
-• Auto-overwrite support with confirmation
+• Auto-overwrite support
 """
 
 import asyncio, re, datetime
@@ -154,22 +154,20 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyword = norm_kw(args[0])
-    existing = collection.find_one({"keyword": keyword})
-    if existing:
-        await update.message.reply_text(
-            f"⚠️ Keyword '{keyword}' already exists. Use /delete {keyword} first to overwrite."
-        )
-        return
-
     replied = update.message.reply_to_message
     saved = False
+
+    # fetch existing data
+    existing = collection.find_one({"keyword": keyword}) or {}
+
+    # post text
     post_text = None
     if replied:
         post_text = replied.text or replied.caption
     if len(args) >= 2 and not post_text:
         post_text = update.message.text.split(None, 2)[2]
 
-    if post_text:
+    if post_text and post_text != existing.get("post_html"):
         collection.update_one(
             {"keyword": keyword},
             {"$set": {"post_html": convert_bracket_links_to_html(post_text),
@@ -179,20 +177,24 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         saved = True
 
+    # sample video
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
-        collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
-        saved = True
+        if file_id != existing.get("sample_file_id"):
+            collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
+            saved = True
 
+    # poster image
     if replied and replied.photo:
         photo_file_id = replied.photo[-1].file_id
-        collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
-        saved = True
+        if photo_file_id != existing.get("poster_file_id"):
+            collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
+            saved = True
 
     if saved:
-        await update.message.reply_text(f"✅ Content attached for '{keyword}'.")
+        await update.message.reply_text(f"✅ Content attached/updated for '{keyword}'.")
     else:
-        await update.message.reply_text("Nothing attached. Reply to TEXT, IMAGE, or VIDEO or provide post text after keyword.")
+        await update.message.reply_text(f"⚠️ Nothing new to attach for '{keyword}'.")
 
 async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
