@@ -15,6 +15,7 @@ User:
 • Fixed How To Download button included automatically
 • Auto-clean old entries silently after 1 year
 • Auto daily broadcast of new posts 3 times/day
+• Avoid sending same post twice to same user
 """
 
 import asyncio, re, datetime
@@ -60,7 +61,7 @@ async def schedule_auto_delete(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     except:
         pass
 
-async def auto_clean_old_entries():
+async def auto_clean_old_entries(app: Application):
     """Delete MongoDB entries older than 1 year silently"""
     while True:
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=365)
@@ -100,12 +101,22 @@ async def auto_broadcast_new_posts(app: Application):
         now = datetime.datetime.utcnow()
         start_of_day = datetime.datetime(now.year, now.month, now.day)
         new_posts = list(collection.find({"timestamp": {"$gte": start_of_day}}))
-        if new_posts:
-            all_users = users_col.find()
-            for post in new_posts:
-                for user in all_users:
+        all_users = list(users_col.find())
+
+        if new_posts and all_users:
+            for user in all_users:
+                sent_posts = user.get("sent_posts", [])  # posts already sent to user
+                for post in new_posts:
+                    keyword = post.get("keyword")
+                    if not keyword or keyword in sent_posts:
+                        continue  # skip already sent post
                     try:
                         await send_post_to_user(app, user["chat_id"], post)
+                        # mark as sent
+                        users_col.update_one(
+                            {"chat_id": user["chat_id"]},
+                            {"$push": {"sent_posts": keyword}}
+                        )
                     except:
                         continue
         await asyncio.sleep(8*60*60)  # every 8 hours → 3 times/day
@@ -115,7 +126,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
 
-    # Save user info permanently for broadcasts
     users_col.update_one(
         {"chat_id": chat_id},
         {"$set": {
@@ -124,7 +134,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "first_name": user.first_name,
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
-        }},
+        },
+        "$setOnInsert": {"sent_posts": []}},  # init sent_posts list
         upsert=True
     )
 
@@ -149,7 +160,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     replied = update.message.reply_to_message
     saved = False
 
-    # Text or caption → save post
     post_text = None
     if replied:
         post_text = replied.text or replied.caption
@@ -158,18 +168,16 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if post_text:
         collection.update_one(
             {"keyword": keyword},
-            {"$set": {"post_html": convert_bracket_links_to_html(post_text), "timestamp": datetime.datetime.utcnow()}},
+            {"$set": {"post_html": convert_bracket_links_to_html(post_text), "timestamp": datetime.datetime.utcnow(), "keyword": keyword}},
             upsert=True
         )
         saved = True
 
-    # Video → save sample
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
         collection.update_one({"keyword": keyword}, {"$set": {"sample_file_id": file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
         saved = True
 
-    # Image → save poster
     if replied and replied.photo:
         photo_file_id = replied.photo[-1].file_id
         collection.update_one({"keyword": keyword}, {"$set": {"poster_file_id": photo_file_id, "timestamp": datetime.datetime.utcnow()}}, upsert=True)
@@ -191,13 +199,14 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyword = norm_kw(args[0])
     result = collection.delete_one({"keyword": keyword})
     if result.deleted_count:
+        # remove keyword from all users sent_posts
+        users_col.update_many({}, {"$pull": {"sent_posts": keyword}})
         await update.message.reply_text(f"🗑️ '{keyword}' deleted successfully.")
     else:
         await update.message.reply_text(f"'{keyword}' not found.")
 
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    # save user info for broadcast
     user = update.effective_user
     users_col.update_one(
         {"chat_id": chat_id},
@@ -207,7 +216,8 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "first_name": user.first_name,
             "last_name": user.last_name,
             "joined_at": datetime.datetime.utcnow()
-        }},
+        },
+        "$setOnInsert": {"sent_posts": []}},  # init sent_posts list
         upsert=True
     )
     keyword = norm_kw(update.message.text or "")
@@ -232,7 +242,10 @@ async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_users = users_col.find()
     for user in all_users:
         try:
-            await send_post_to_user(context.application, user["chat_id"], post)
+            sent_posts = user.get("sent_posts", [])
+            if keyword not in sent_posts:
+                await send_post_to_user(context.application, user["chat_id"], post)
+                users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
         except:
             continue
     await update.message.reply_text(f"✅ Broadcasted '{keyword}' to all users.")
@@ -241,16 +254,20 @@ async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not config.BOT_TOKEN:
         raise SystemExit("BOT_TOKEN env required")
+
     app = Application.builder().token(config.BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("attach", attach))
     app.add_handler(CommandHandler("delete", delete_keyword))
     app.add_handler(CommandHandler("broadcast", manual_broadcast))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
 
-    # Background tasks
-    asyncio.create_task(auto_clean_old_entries())
-    asyncio.create_task(auto_broadcast_new_posts(app))
+    async def on_startup(app: Application):
+        app.create_task(auto_clean_old_entries(app))
+        app.create_task(auto_broadcast_new_posts(app))
+
+    app.post_init = on_startup
 
     print("Bot running…")
     app.run_polling(close_loop=False)
