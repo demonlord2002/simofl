@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Coolie Auto-Post + Sample Video Bot with MongoDB
-------------------------------------------------
+Coolie Auto-Post + Sample Video Bot with MongoDB (Safe Version)
+--------------------------------------------------------------
 Admin:
 • Reply to TEXT or IMAGE with /attach <keyword> → saves post
 • Reply to VIDEO with /attach <keyword> → saves sample video
@@ -14,9 +14,9 @@ User:
 • protect_content=True
 • Fixed How To Download button included automatically
 • Auto-clean old entries silently after 1 year
-• Auto daily broadcast of new posts 3 times/day
 • Avoid sending same post twice to same user (per day)
 • Auto-overwrite support
+• ✅ Added rate limit (default: 5 seconds per request)
 """
 
 import asyncio, re, datetime
@@ -96,36 +96,6 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
         msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
         asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
 
-# -------------------- Auto Broadcast --------------------
-async def auto_broadcast_new_posts(app: Application):
-    while True:
-        now = datetime.datetime.utcnow()
-        start_of_day = datetime.datetime(now.year, now.month, now.day)
-        today_key = start_of_day.strftime("%Y-%m-%d")
-
-        new_posts = list(collection.find({"timestamp": {"$gte": start_of_day}}))
-        all_users = list(users_col.find())
-
-        if new_posts and all_users:
-            for user in all_users:
-                sent_today = user.get("sent_today", {}).get(today_key, [])
-                for post in new_posts:
-                    keyword = post.get("keyword")
-                    if not keyword or keyword in sent_today:
-                        continue
-                    try:
-                        await send_post_to_user(app, user["chat_id"], post)
-                        users_col.update_one(
-                            {"chat_id": user["chat_id"]},
-                            {"$push": {f"sent_today.{today_key}": keyword}}
-                        )
-                    except:
-                        continue
-
-        await asyncio.sleep(8*60*60)
-        cutoff_key = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
-        users_col.update_many({}, {"$unset": {f"sent_today.{cutoff_key}": ""}})
-
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -138,7 +108,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "username": user.username,
             "first_name": user.first_name,
             "last_name": user.last_name,
-            "joined_at": datetime.datetime.utcnow()
+            "joined_at": datetime.datetime.utcnow(),
+            "last_request": None
         },
         "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
@@ -240,9 +211,21 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"'{keyword}' not found.")
 
+# -------------------- Rate Limited Keyword Trigger --------------------
+RATE_LIMIT_SECONDS = 5
+
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
+
+    user_doc = users_col.find_one({"chat_id": chat_id}) or {}
+    last_request = user_doc.get("last_request")
+    now = datetime.datetime.utcnow()
+
+    # rate limit check
+    if last_request and (now - last_request).total_seconds() < RATE_LIMIT_SECONDS:
+        return  # ignore spammy requests
+
     users_col.update_one(
         {"chat_id": chat_id},
         {"$set": {
@@ -250,11 +233,13 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "username": user.username,
             "first_name": user.first_name,
             "last_name": user.last_name,
-            "joined_at": datetime.datetime.utcnow()
+            "joined_at": datetime.datetime.utcnow(),
+            "last_request": now
         },
         "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
     )
+
     keyword = norm_kw(update.message.text or "")
     data = collection.find_one({"keyword": keyword})
     if not data:
@@ -300,7 +285,6 @@ def main():
 
     async def on_startup(app: Application):
         asyncio.create_task(auto_clean_old_entries(app))
-        asyncio.create_task(auto_broadcast_new_posts(app))
 
     app.post_init = on_startup
 
