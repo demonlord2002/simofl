@@ -60,7 +60,7 @@ async def schedule_auto_delete(bot, chat_id: int, message_id: int, seconds: int 
     try:
         await asyncio.sleep(seconds or config.AUTO_DELETE_SECONDS)
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except:
+    except Exception:
         pass
 
 async def auto_clean_old_entries(app: Application):
@@ -77,24 +77,29 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
     buttons = [[InlineKeyboardButton("More Info", url="https://t.me/sampleclipes/3")]]
     markup = InlineKeyboardMarkup(buttons)
 
-    if poster_id:
-        msg = await app.bot.send_photo(
-            chat_id, photo=poster_id, caption=post_html,
-            parse_mode=constants.ParseMode.HTML,
-            protect_content=True, reply_markup=markup
-        )
+    try:
+        if poster_id:
+            msg = await app.bot.send_photo(
+                chat_id, photo=poster_id, caption=post_html,
+                parse_mode=constants.ParseMode.HTML,
+                protect_content=True, reply_markup=markup
+            )
+        else:
+            msg = await app.bot.send_message(
+                chat_id, text=post_html,
+                parse_mode=constants.ParseMode.HTML,
+                protect_content=True, reply_markup=markup
+            )
         asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
-    else:
-        msg = await app.bot.send_message(
-            chat_id, text=post_html,
-            parse_mode=constants.ParseMode.HTML,
-            protect_content=True, reply_markup=markup
-        )
-        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
+    except Exception:
+        pass
 
     if sample_id:
-        msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
-        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
+        try:
+            msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
+            asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
+        except Exception:
+            pass
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,8 +153,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyword = norm_kw(args[0])
     replied = update.message.reply_to_message
     saved = False
-
-    existing = collection.find_one({"keyword": keyword}) or {}
 
     # post text
     post_text = None
@@ -266,9 +269,54 @@ async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if keyword not in sent_posts:
                 await send_post_to_user(context.application, user["chat_id"], post)
                 users_col.update_one({"chat_id": user["chat_id"]}, {"$push": {"sent_posts": keyword}})
-        except:
+        except Exception:
             continue
     await update.message.reply_text(f"✅ Broadcasted '{keyword}' to all users.")
+
+# -------------------- List / Report Commands --------------------
+MONTHS = {
+    "jan":1, "feb":2, "mar":3, "apr":4, "may":5, "jun":6,
+    "jul":7, "aug":8, "sep":9, "oct":10, "nov":11, "dec":12
+}
+
+async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return
+
+    args = context.args
+    msg_text = ""
+
+    # /list → all keywords
+    if not args:
+        all_keywords = collection.distinct("keyword")
+        msg_text = f"📄 Total keywords: {len(all_keywords)}\n" + "\n".join(all_keywords)
+
+    # /listm<month> → monthly report
+    elif args[0].lower().startswith("m"):
+        month_str = args[0][1:].lower()
+        month_num = MONTHS.get(month_str)
+        if not month_num:
+            await update.message.reply_text("❌ Invalid month. Use jan, feb, ..., dec.")
+            return
+        start_date = datetime.datetime(datetime.datetime.utcnow().year, month_num, 1)
+        end_date = datetime.datetime(datetime.datetime.utcnow().year, month_num % 12 + 1, 1) if month_num != 12 else datetime.datetime(datetime.datetime.utcnow().year + 1, 1, 1)
+        keywords = collection.find({"timestamp": {"$gte": start_date, "$lt": end_date}})
+        kws = [k["keyword"] for k in keywords]
+        msg_text = f"📄 Keywords used in {month_str.capitalize()}: {len(kws)}\n" + "\n".join(kws)
+
+    # /listw → weekly report
+    elif args[0].lower() == "w":
+        now = datetime.datetime.utcnow()
+        start_week = now - datetime.timedelta(days=now.weekday())  # Monday
+        keywords = collection.find({"timestamp": {"$gte": start_week}})
+        kws = [k["keyword"] for k in keywords]
+        msg_text = f"📄 Keywords used this week: {len(kws)}\n" + "\n".join(kws)
+
+    else:
+        msg_text = "❌ Invalid command usage."
+
+    await update.message.reply_text(msg_text or "No keywords found.")
 
 # -------------------- Main --------------------
 def main():
@@ -277,10 +325,12 @@ def main():
 
     app = Application.builder().token(config.BOT_TOKEN).build()
 
+    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("attach", attach))
     app.add_handler(CommandHandler("delete", delete_keyword))
     app.add_handler(CommandHandler("broadcast", manual_broadcast))
+    app.add_handler(CommandHandler(["list"], list_keywords))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
 
     async def on_startup(app: Application):
