@@ -154,7 +154,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
         ],
         [
-            InlineKeyboardButton("Watch Sample Here", url="https://t.me/tamilmoviedownload0/3")
+            InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
