@@ -10,7 +10,7 @@ Admin:
 
 User:
 • Send <keyword> → bot sends post + sample video
-• Auto-delete after 10 min
+• Auto-delete after 10 min (default via config.AUTO_DELETE_SECONDS)
 • protect_content=True
 • Fixed How To Download button included automatically
 • Auto-clean old entries silently after 1 year
@@ -19,7 +19,9 @@ User:
 • Auto-overwrite support
 """
 
-import asyncio, re, datetime
+import asyncio
+import re
+import datetime
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -56,11 +58,16 @@ def convert_bracket_links_to_html(text: str) -> str:
     return "".join(parts)
 
 # -------------------- Auto Delete --------------------
-async def schedule_auto_delete(bot, chat_id: int, message_id: int):
+async def schedule_auto_delete(bot, chat_id: int, message_id: int, seconds: Optional[int] = None):
+    """
+    Delete a message after `seconds`. If seconds is None, use config.AUTO_DELETE_SECONDS.
+    """
     try:
-        await asyncio.sleep(config.AUTO_DELETE_SECONDS)
+        sleep_seconds = seconds if seconds is not None else getattr(config, "AUTO_DELETE_SECONDS", 600)
+        await asyncio.sleep(sleep_seconds)
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
     except:
+        # swallow errors silently (message might already be deleted or bot may lack rights)
         pass
 
 async def auto_clean_old_entries(app: Application):
@@ -83,6 +90,7 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
             parse_mode=constants.ParseMode.HTML,
             protect_content=True, reply_markup=markup
         )
+        # Use default config.AUTO_DELETE_SECONDS for normal posts
         asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
     else:
         msg = await app.bot.send_message(
@@ -159,14 +167,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     markup = InlineKeyboardMarkup(buttons)
 
-    await update.message.reply_text(
+    msg = await update.message.reply_text(
         f"👋 Hi {user.first_name}!\n\n"
         "Welcome! Here you can explore the latest clips, short videos, and posts.\n"
         "Just type the keyword you are interested in, and you'll receive the content instantly.\n\n"
         "Have fun exploring! 🎉",
         parse_mode=constants.ParseMode.HTML,
         reply_markup=markup
-)
+    )
+
+    # Auto-delete /start message after 5 minutes (300 seconds)
+    asyncio.create_task(schedule_auto_delete(context.bot, chat_id, msg.message_id, seconds=300))
 
 
 async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -189,6 +200,8 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if replied:
         post_text = replied.text or replied.caption
     if len(args) >= 2 and not post_text:
+        # support sending inline text with the command
+        # e.g. /attach keyword This is the post text
         post_text = update.message.text.split(None, 2)[2]
 
     if post_text and post_text != existing.get("post_html"):
@@ -220,6 +233,7 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"⚠️ Nothing new to attach for '{keyword}'.")
 
+
 async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_owner(user_id):
@@ -235,6 +249,7 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🗑️ '{keyword}' deleted successfully.")
     else:
         await update.message.reply_text(f"'{keyword}' not found.")
+
 
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -256,6 +271,7 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data:
         return
     await send_post_to_user(context.application, chat_id, data)
+
 
 async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
