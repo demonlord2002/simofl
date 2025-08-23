@@ -74,7 +74,7 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
     sample_id = post.get("sample_file_id")
-    buttons = [[InlineKeyboardButton("More Info", url="https://t.me/YourChannelHere")]]
+    buttons = [[InlineKeyboardButton("More Info", url="https://t.me/sampleclipes/3")]]
     markup = InlineKeyboardMarkup(buttons)
 
     if poster_id:
@@ -121,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
         ],
         [
-            InlineKeyboardButton("More Info", url="https://t.me/YourChannelHere")
+            InlineKeyboardButton("More Info", url="https://t.me/sampleclipes/3")
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
