@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Coolie Auto-Post + Sample Video Bot with MongoDB (Safe Version)
+Legit Auto-Post + Sample Video Bot with MongoDB (Safe Version)
 --------------------------------------------------------------
 Admin:
 • Reply to TEXT or IMAGE with /attach <keyword> → saves post
@@ -12,7 +12,7 @@ User:
 • Send <keyword> → bot sends post + sample video
 • Auto-delete after 10 min (start message = 5 min)
 • protect_content=True
-• Fixed How To Download button included automatically
+• Neutral "More Info" button included automatically
 • Auto-clean old entries silently after 1 year
 • Avoid sending same post twice to same user (per day)
 • Auto-overwrite support
@@ -74,7 +74,7 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
     sample_id = post.get("sample_file_id")
-    buttons = [[InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")]]
+    buttons = [[InlineKeyboardButton("More Info", url="https://t.me/YourChannelHere")]]
     markup = InlineKeyboardMarkup(buttons)
 
     if poster_id:
@@ -121,7 +121,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Support Channel", url="https://t.me/Cursed_Intelligence")
         ],
         [
-            InlineKeyboardButton("How To Download — Click Here", url="https://t.me/tamilmoviedownload0/3")
+            InlineKeyboardButton("More Info", url="https://t.me/YourChannelHere")
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
