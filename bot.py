@@ -184,7 +184,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     buttons = [
         [
-            InlineKeyboardButton("Noob Dev", url="https://t.me/Adithyaa_2002"),
+            InlineKeyboardButton("Noob Dev", url="https://t.me/SunsetOfMe"),
             InlineKeyboardButton("Support Channel", url="https://t.me/Fallen_Angels_Team")
         ],
         [
