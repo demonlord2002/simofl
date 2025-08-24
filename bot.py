@@ -7,6 +7,7 @@ Admin:
 • Reply to VIDEO with /attach <keyword> → saves sample video
 • /delete <keyword> → deletes post + sample video
 • /broadcast <keyword> → manually broadcast specific post+video
+• /broadcast -pin → reply to video, sends & pins to all users DM
 
 User:
 • Send <keyword> → bot sends post + sample video
@@ -62,19 +63,16 @@ def _channel_url() -> str:
     ch = getattr(config, "FORCE_SUB_CHANNEL", "")
     if isinstance(ch, str) and ch.startswith("@"):
         return f"https://t.me/{ch[1:]}"
-    # If it's an ID or something else, fallback to Support Channel or a generic link
     return f"https://t.me/{getattr(config, 'SUPPORT_CHANNEL_USERNAME', 'telegram')}"
 
 async def is_user_member(bot, user_id: int) -> bool:
-    """Check whether user is a member/admin/owner of the force-sub channel."""
     channel = getattr(config, "FORCE_SUB_CHANNEL", None)
     if not channel:
-        return True  # If not configured, don't block
+        return True
     try:
         member = await bot.get_chat_member(channel, user_id)
         return member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
     except Exception:
-        # Could be privacy issues or bot not admin; treat as not a member
         return False
 
 def subscription_prompt_markup() -> InlineKeyboardMarkup:
@@ -85,16 +83,12 @@ def subscription_prompt_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 async def ensure_subscribed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Gatekeeper: returns True if user is allowed, else sends prompt & returns False."""
     user = update.effective_user
     chat_id = update.effective_chat.id
     if is_owner(user.id):
-        return True  # owners bypass
-
+        return True
     if await is_user_member(context.bot, user.id):
         return True
-
-    # Not joined → show prompt
     text = (
         "🚧 <b>Access Locked</b>\n\n"
         "To use this bot, please join our channel first. "
@@ -105,7 +99,6 @@ async def ensure_subscribed(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         msg = await (update.message.reply_text if update.message else update.callback_query.message.reply_text)(
             text, parse_mode=constants.ParseMode.HTML, reply_markup=subscription_prompt_markup()
         )
-        # Optional: auto-delete the gate message after 5 minutes
         asyncio.create_task(schedule_auto_delete(context.bot, chat_id, msg.message_id, 300))
     except Exception:
         pass
@@ -126,7 +119,7 @@ async def auto_clean_old_entries(app: Application):
         await asyncio.sleep(24*60*60)
 
 # -------------------- Sending Posts --------------------
-async def send_post_to_user(app: Application, chat_id: int, post: dict):
+async def send_post_to_user(app: Application, chat_id: int, post: dict, pin=False, permanent=False):
     post_html = post.get("post_html") or ""
     poster_id = post.get("poster_file_id")
     sample_id = post.get("sample_file_id")
@@ -146,27 +139,36 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
                 parse_mode=constants.ParseMode.HTML,
                 protect_content=True, reply_markup=markup
             )
-        asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
+        if not permanent:
+            asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg.message_id))
+        if pin:
+            try:
+                await app.bot.pin_chat_message(chat_id, msg.message_id, disable_notification=True)
+            except Exception:
+                pass
     except Exception:
         pass
 
     if sample_id:
         try:
             msg2 = await app.bot.send_video(chat_id, video=sample_id, protect_content=True)
-            asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
+            if not permanent:
+                asyncio.create_task(schedule_auto_delete(app.bot, chat_id, msg2.message_id))
+            if pin:
+                try:
+                    await app.bot.pin_chat_message(chat_id, msg2.message_id, disable_notification=True)
+                except Exception:
+                    pass
         except Exception:
             pass
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Force-sub gate
     allowed = await ensure_subscribed(update, context)
     if not allowed:
         return
-
     user = update.effective_user
     chat_id = update.effective_chat.id
-
     users_col.update_one(
         {"chat_id": chat_id},
         {"$set": {
@@ -180,7 +182,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
     )
-
     buttons = [
         [
             InlineKeyboardButton("Developer", url="https://t.me/Adithyaa_2002"),
@@ -191,7 +192,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
     markup = InlineKeyboardMarkup(buttons)
-
     msg = await update.message.reply_text(
         f"👋 Hi {user.first_name}!\n\n"
         "Welcome! Here you can explore the latest clips, short videos, and posts.\n"
@@ -210,12 +210,10 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text("Usage: /attach <keyword> (reply to TEXT, IMAGE, or VIDEO)")
         return
-
     keyword = norm_kw(args[0])
     replied = update.message.reply_to_message
     saved = False
 
-    # post text
     post_text = None
     if replied:
         post_text = replied.text or replied.caption
@@ -234,7 +232,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         saved = True
 
-    # sample video
     if replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
         file_id = replied.video.file_id if replied.video else replied.document.file_id
         collection.update_one(
@@ -244,7 +241,6 @@ async def attach(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         saved = True
 
-    # poster image
     if replied and replied.photo:
         photo_file_id = replied.photo[-1].file_id
         collection.update_one(
@@ -279,22 +275,16 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 RATE_LIMIT_SECONDS = 5
 
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Force-sub gate for every keyword use
     allowed = await ensure_subscribed(update, context)
     if not allowed:
         return
-
     chat_id = update.effective_chat.id
     user = update.effective_user
-
     user_doc = users_col.find_one({"chat_id": chat_id}) or {}
     last_request = user_doc.get("last_request")
     now = datetime.datetime.utcnow()
-
-    # rate limit check
     if last_request and (now - last_request).total_seconds() < RATE_LIMIT_SECONDS:
-        return  # ignore spammy requests
-
+        return
     users_col.update_one(
         {"chat_id": chat_id},
         {"$set": {
@@ -308,21 +298,45 @@ async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "$setOnInsert": {"sent_posts": [], "sent_today": {}}},
         upsert=True
     )
-
     keyword = norm_kw(update.message.text or "")
     data = collection.find_one({"keyword": keyword})
     if not data:
         return
     await send_post_to_user(context.application, chat_id, data)
 
+# -------------------- Broadcast with Pin --------------------
 async def manual_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_owner(user_id):
         return
+
     args = context.args
-    if not args:
-        await update.message.reply_text("Usage: /broadcast <keyword>")
+    replied = update.message.reply_to_message
+    pin_flag = "-pin" in args
+
+    if pin_flag and replied and (replied.video or (replied.document and (replied.document.mime_type or "").startswith("video/"))):
+        # Broadcast replied video to all users DM and pin
+        file_id = replied.video.file_id if replied.video else replied.document.file_id
+        caption = replied.caption or ""
+
+        all_users = users_col.find()
+        for user in all_users:
+            try:
+                msg = await context.bot.send_video(user["chat_id"], video=file_id, caption=caption, protect_content=True)
+                if pin_flag:
+                    try:
+                        await context.bot.pin_chat_message(user["chat_id"], msg.message_id, disable_notification=True)
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        await update.message.reply_text(f"✅ Video broadcasted & pinned to all users DM.")
         return
+
+    if not args:
+        await update.message.reply_text("Usage: /broadcast <keyword> or reply to video with /broadcast -pin")
+        return
+
     keyword = norm_kw(args[0])
     post = collection.find_one({"keyword": keyword})
     if not post:
@@ -349,19 +363,13 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_owner(user_id):
         return
-
     args = context.args
     msg_text = ""
-
-    # /list → all keywords
     if not args:
         all_keywords = collection.distinct("keyword")
         msg_text = f"📄 Total keywords: {len(all_keywords)}\n" + "\n".join(all_keywords)
-
-    # /list m<month> → monthly report
     elif args[0].lower().startswith("m"):
         month_str = args[0][1:].lower()
-        MONTHS = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
         month_num = MONTHS.get(month_str)
         if not month_num:
             await update.message.reply_text("❌ Invalid month. Use jan, feb, ..., dec.")
@@ -372,18 +380,14 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keywords = collection.find({"timestamp": {"$gte": start_date, "$lt": end_date}})
         kws = [k["keyword"] for k in keywords]
         msg_text = f"📄 Keywords used in {month_str.capitalize()}: {len(kws)}\n" + "\n".join(kws)
-
-    # /list w → weekly report
     elif args[0].lower() == "w":
         now = datetime.datetime.utcnow()
-        start_week = now - datetime.timedelta(days=now.weekday())  # Monday
+        start_week = now - datetime.timedelta(days=now.weekday())
         keywords = collection.find({"timestamp": {"$gte": start_week}})
         kws = [k["keyword"] for k in keywords]
         msg_text = f"📄 Keywords used this week: {len(kws)}\n" + "\n".join(kws)
-
     else:
         msg_text = "❌ Invalid command usage."
-
     await update.message.reply_text(msg_text or "No keywords found.")
 
 # -------------------- Callback: re-check subscription --------------------
@@ -415,27 +419,20 @@ async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     if not config.BOT_TOKEN:
         raise SystemExit("BOT_TOKEN env required")
-
     app = Application.builder().token(config.BOT_TOKEN).build()
 
-    # Command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("attach", attach))
     app.add_handler(CommandHandler("delete", delete_keyword))
     app.add_handler(CommandHandler("broadcast", manual_broadcast))
     app.add_handler(CommandHandler(["list"], list_keywords))
-
-    # Callback for subscription re-check
     app.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
-
-    # Keyword listener
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
 
     async def on_startup(app: Application):
         asyncio.create_task(auto_clean_old_entries(app))
 
     app.post_init = on_startup
-
     print("Bot running…")
     app.run_polling(close_loop=False)
 
