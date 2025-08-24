@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Legit Auto-Post + Sample Video Bot with MongoDB (Safe Version)
---------------------------------------------------------------
+Legit Auto-Post + Sample Video Bot with MongoDB (Safe Version) + Force Subscribe
+-------------------------------------------------------------------------------
 Admin:
 • Reply to TEXT or IMAGE with /attach <keyword> → saves post
 • Reply to VIDEO with /attach <keyword> → saves sample video
@@ -17,12 +17,14 @@ User:
 • Avoid sending same post twice to same user (per day)
 • Auto-overwrite support
 • ✅ Added rate limit (default: 5 seconds per request)
+• ✅ Force-Subscribe: must join channel before using the bot (auto-verify)
 """
 
 import asyncio, re, datetime
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.constants import ChatMemberStatus
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from pymongo import MongoClient
 import config
 
@@ -34,7 +36,7 @@ users_col = db["users"]
 
 # -------------------- Utils --------------------
 def is_owner(user_id: Optional[int]) -> bool:
-    return bool(user_id and (user_id in config.OWNER_IDS or not config.OWNER_IDS))
+    return bool(user_id and (user_id in getattr(config, "OWNER_IDS", []) or not getattr(config, "OWNER_IDS", [])))
 
 def norm_kw(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
@@ -54,6 +56,60 @@ def convert_bracket_links_to_html(text: str) -> str:
         last = m.end()
     parts.append(html_escape(text[last:]))
     return "".join(parts)
+
+# -------------------- Force Subscribe --------------------
+def _channel_url() -> str:
+    ch = getattr(config, "FORCE_SUB_CHANNEL", "")
+    if isinstance(ch, str) and ch.startswith("@"):
+        return f"https://t.me/{ch[1:]}"
+    # If it's an ID or something else, fallback to Support Channel or a generic link
+    return f"https://t.me/{getattr(config, 'SUPPORT_CHANNEL_USERNAME', 'telegram')}"
+
+async def is_user_member(bot, user_id: int) -> bool:
+    """Check whether user is a member/admin/owner of the force-sub channel."""
+    channel = getattr(config, "FORCE_SUB_CHANNEL", None)
+    if not channel:
+        return True  # If not configured, don't block
+    try:
+        member = await bot.get_chat_member(channel, user_id)
+        return member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
+    except Exception:
+        # Could be privacy issues or bot not admin; treat as not a member
+        return False
+
+def subscription_prompt_markup() -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton("Join the Channel ✅", url=_channel_url())],
+        [InlineKeyboardButton("✅ I’ve Joined", callback_data="check_sub")]
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+async def ensure_subscribed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Gatekeeper: returns True if user is allowed, else sends prompt & returns False."""
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    if is_owner(user.id):
+        return True  # owners bypass
+
+    if await is_user_member(context.bot, user.id):
+        return True
+
+    # Not joined → show prompt
+    text = (
+        "🚧 <b>Access Locked</b>\n\n"
+        "To use this bot, please join our channel first. "
+        "Tap <b>Join the Channel ✅</b> and then press <b>“I’ve Joined”</b> to verify.\n\n"
+        "Thanks for supporting us! 💜"
+    )
+    try:
+        msg = await (update.message.reply_text if update.message else update.callback_query.message.reply_text)(
+            text, parse_mode=constants.ParseMode.HTML, reply_markup=subscription_prompt_markup()
+        )
+        # Optional: auto-delete the gate message after 5 minutes
+        asyncio.create_task(schedule_auto_delete(context.bot, chat_id, msg.message_id, 300))
+    except Exception:
+        pass
+    return False
 
 # -------------------- Auto Delete --------------------
 async def schedule_auto_delete(bot, chat_id: int, message_id: int, seconds: int = None):
@@ -103,6 +159,11 @@ async def send_post_to_user(app: Application, chat_id: int, post: dict):
 
 # -------------------- Commands --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Force-sub gate
+    allowed = await ensure_subscribed(update, context)
+    if not allowed:
+        return
+
     user = update.effective_user
     chat_id = update.effective_chat.id
 
@@ -218,6 +279,11 @@ async def delete_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
 RATE_LIMIT_SECONDS = 5
 
 async def keyword_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Force-sub gate for every keyword use
+    allowed = await ensure_subscribed(update, context)
+    if not allowed:
+        return
+
     chat_id = update.effective_chat.id
     user = update.effective_user
 
@@ -292,20 +358,22 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_keywords = collection.distinct("keyword")
         msg_text = f"📄 Total keywords: {len(all_keywords)}\n" + "\n".join(all_keywords)
 
-    # /listm<month> → monthly report
+    # /list m<month> → monthly report
     elif args[0].lower().startswith("m"):
         month_str = args[0][1:].lower()
+        MONTHS = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,"jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
         month_num = MONTHS.get(month_str)
         if not month_num:
             await update.message.reply_text("❌ Invalid month. Use jan, feb, ..., dec.")
             return
-        start_date = datetime.datetime(datetime.datetime.utcnow().year, month_num, 1)
-        end_date = datetime.datetime(datetime.datetime.utcnow().year, month_num % 12 + 1, 1) if month_num != 12 else datetime.datetime(datetime.datetime.utcnow().year + 1, 1, 1)
+        year = datetime.datetime.utcnow().year
+        start_date = datetime.datetime(year, month_num, 1)
+        end_date = datetime.datetime(year + (1 if month_num == 12 else 0), (1 if month_num == 12 else month_num + 1), 1)
         keywords = collection.find({"timestamp": {"$gte": start_date, "$lt": end_date}})
         kws = [k["keyword"] for k in keywords]
         msg_text = f"📄 Keywords used in {month_str.capitalize()}: {len(kws)}\n" + "\n".join(kws)
 
-    # /listw → weekly report
+    # /list w → weekly report
     elif args[0].lower() == "w":
         now = datetime.datetime.utcnow()
         start_week = now - datetime.timedelta(days=now.weekday())  # Monday
@@ -317,6 +385,31 @@ async def list_keywords(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_text = "❌ Invalid command usage."
 
     await update.message.reply_text(msg_text or "No keywords found.")
+
+# -------------------- Callback: re-check subscription --------------------
+async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    if await is_user_member(context.bot, user.id):
+        try:
+            await query.edit_message_text(
+                "✅ Verified! You’ve joined the channel. You can now use the bot.\n\n"
+                "Send a keyword to get content.",
+                parse_mode=constants.ParseMode.HTML
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            await query.edit_message_text(
+                "❌ You haven’t joined yet.\n\n"
+                "Please tap <b>Join the Channel ✅</b>, then press <b>“I’ve Joined”</b> to verify.",
+                parse_mode=constants.ParseMode.HTML,
+                reply_markup=subscription_prompt_markup()
+            )
+        except Exception:
+            pass
 
 # -------------------- Main --------------------
 def main():
@@ -331,6 +424,11 @@ def main():
     app.add_handler(CommandHandler("delete", delete_keyword))
     app.add_handler(CommandHandler("broadcast", manual_broadcast))
     app.add_handler(CommandHandler(["list"], list_keywords))
+
+    # Callback for subscription re-check
+    app.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
+
+    # Keyword listener
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_trigger))
 
     async def on_startup(app: Application):
