@@ -33,6 +33,10 @@
     "COLLECTION_NAME": {
       "description": "MongoDB collection name",
       "value": "keywords"
+    },
+    "FORCE_SUB_CHANNEL": {
+      "description": "Force Subscribe Channel Username (e.g., @Fallen_Angels_Team)",
+      "value": "@Fallen_Angels_Team"
     }
   },
   "formation": {
