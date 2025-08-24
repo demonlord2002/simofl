@@ -9,7 +9,7 @@
   "env": {
     "BOT_TOKEN": {
       "description": "Your Telegram Bot Token from @BotFather",
-      "value": "8373123085:AAHOk5tZb7gCjsgq5RK6JrsRJCfre1nZ1Zo",
+      "value": "8430877877:AAFi6U6G4fTzHDFGp2p4JkwatMi5YK81KqU",
       "required": true
     },
     "OWNER_IDS": {
