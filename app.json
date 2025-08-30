@@ -14,7 +14,7 @@
     },
     "OWNER_IDS": {
       "description": "Comma-separated Telegram user IDs of bot admins",
-      "value": "7806800300",
+      "value": "7590607726",
       "required": true
     },
     "AUTO_DELETE_SECONDS": {
@@ -23,7 +23,7 @@
     },
     "MONGO_URI": {
       "description": "MongoDB connection URI (e.g., mongodb://localhost:27017 or Atlas URI)",
-      "value": "mongodb+srv://rubesh08virat:rubesh08virat@cluster0.d33p1rm.mongodb.net/?retryWrites=true&w=majority",
+      "value": "mongodb+srv://vellina095:vellina095@cluster0.l1zrwj3.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
       "required": true
     },
     "DB_NAME": {
